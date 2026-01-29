@@ -2,7 +2,7 @@
 Vercel Serverless Function - Trading Dashboard
 """
 
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request
 from datetime import datetime
 import json
 import os
@@ -13,10 +13,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yfinance as yf
 
-app = Flask(__name__)
+# Vercel KV (Redis) for persistent storage
+try:
+    from upstash_redis import Redis
+    redis = Redis(
+        url=os.environ.get("KV_REST_API_URL", ""),
+        token=os.environ.get("KV_REST_API_TOKEN", "")
+    )
+    USE_KV = bool(os.environ.get("KV_REST_API_URL"))
+except:
+    redis = None
+    USE_KV = False
 
-# Since Vercel is serverless, we'll store data in memory for the session
-# For persistence, you'd need a database (Vercel KV, Supabase, etc.)
+app = Flask(__name__)
 
 WATCHLIST = [
     "NVDA", "MU", "BABA", "ALB", "INTC", "SLV",
@@ -24,9 +33,39 @@ WATCHLIST = [
     "JD", "PDD", "VZ", "TSLA", "ALLY"
 ]
 
-# In-memory storage (resets on cold start)
-POSITIONS = []
-TRADE_HISTORY = []
+
+def get_positions():
+    """Get positions from KV or return empty list."""
+    if USE_KV and redis:
+        try:
+            data = redis.get("positions")
+            return json.loads(data) if data else []
+        except:
+            return []
+    return []
+
+
+def get_trade_history():
+    """Get trade history from KV or return empty list."""
+    if USE_KV and redis:
+        try:
+            data = redis.get("trade_history")
+            return json.loads(data) if data else []
+        except:
+            return []
+    return []
+
+
+def save_positions(positions):
+    """Save positions to KV."""
+    if USE_KV and redis:
+        redis.set("positions", json.dumps(positions))
+
+
+def save_trade_history(history):
+    """Save trade history to KV."""
+    if USE_KV and redis:
+        redis.set("trade_history", json.dumps(history))
 
 DASHBOARD_HTML = """
 <!DOCTYPE html>
@@ -238,7 +277,9 @@ DASHBOARD_HTML = """
             </div>
             <div class="stat">
                 <span class="stat-label">Portfolio</span>
-                <span style="color: #f0883e;">In-memory (resets on deploy)</span>
+                <span style="color: {{ '#3fb950' if kv_enabled else '#f0883e' }};">
+                    {{ 'Vercel KV (persistent)' if kv_enabled else 'In-memory (resets on deploy)' }}
+                </span>
             </div>
         </div>
 
@@ -304,17 +345,21 @@ def dashboard():
     else:
         market_status = "CLOSED"
 
+    # Get positions and history from KV
+    positions = get_positions()
+    history = get_trade_history()
+
     # Calculate totals from positions
-    total_pnl = sum(p.get('pnl', 0) for p in POSITIONS)
-    wins = len([h for h in TRADE_HISTORY if h.get('result') == 'WIN'])
-    losses = len([h for h in TRADE_HISTORY if h.get('result') == 'LOSS'])
+    total_pnl = sum(p.get('pnl', 0) for p in positions)
+    wins = len([h for h in history if h.get('result') == 'WIN'])
+    losses = len([h for h in history if h.get('result') == 'LOSS'])
     win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
 
     return render_template_string(
         DASHBOARD_HTML,
         stocks=stocks,
-        positions=POSITIONS,
-        history=TRADE_HISTORY,
+        positions=positions,
+        history=history,
         total_pnl=total_pnl,
         win_rate=win_rate,
         wins=wins,
@@ -322,7 +367,8 @@ def dashboard():
         spy_change=spy_change,
         vix=vix,
         market_status=market_status,
-        updated=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        updated=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        kv_enabled=USE_KV
     )
 
 
@@ -338,7 +384,41 @@ def api_stocks():
 @app.route('/api/health')
 def health():
     """Health check."""
-    return jsonify({"status": "ok", "timestamp": datetime.now().isoformat()})
+    return jsonify({
+        "status": "ok",
+        "timestamp": datetime.now().isoformat(),
+        "kv_enabled": USE_KV
+    })
+
+
+@app.route('/api/sync', methods=['POST'])
+def sync_portfolio():
+    """Sync portfolio data from local to Vercel KV."""
+    if not USE_KV:
+        return jsonify({"error": "KV not configured"}), 400
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    if 'positions' in data:
+        save_positions(data['positions'])
+    if 'trade_history' in data:
+        save_trade_history(data['trade_history'])
+
+    return jsonify({"status": "synced", "timestamp": datetime.now().isoformat()})
+
+
+@app.route('/api/positions')
+def api_positions():
+    """Get current positions."""
+    return jsonify(get_positions())
+
+
+@app.route('/api/history')
+def api_history():
+    """Get trade history."""
+    return jsonify(get_trade_history())
 
 
 # Vercel requires this
