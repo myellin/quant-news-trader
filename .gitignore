@@ -1,0 +1,35 @@
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+venv/
+.venv/
+
+# Data files (contain your trades - keep local or use DB in prod)
+portfolio.json
+trade_history.json
+alert_history.json
+seen_news.json
+daily_state.json
+trade_state.json
+smart_alert_history.json
+daily_report_state.json
+realtime_alert_history.json
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
