@@ -13,14 +13,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yfinance as yf
 
-# Vercel KV (Redis) for persistent storage
+# Upstash Redis for persistent storage
 try:
     from upstash_redis import Redis
-    redis = Redis(
-        url=os.environ.get("KV_REST_API_URL", ""),
-        token=os.environ.get("KV_REST_API_TOKEN", "")
-    )
-    USE_KV = bool(os.environ.get("KV_REST_API_URL"))
+    redis_url = os.environ.get("UPSTASH_REDIS_REST_URL") or os.environ.get("KV_REST_API_URL", "")
+    redis_token = os.environ.get("UPSTASH_REDIS_REST_TOKEN") or os.environ.get("KV_REST_API_TOKEN", "")
+    redis = Redis(url=redis_url, token=redis_token)
+    USE_KV = bool(redis_url)
 except:
     redis = None
     USE_KV = False
